@@ -2,11 +2,12 @@ package bugbuster.deviceusage.test;
 
 import java.io.Closeable;
 
+import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
-import android.test.RenamingDelegatingContext;
+import android.util.Log;
 import bugbuster.deviceusage.access.AppStatistics;
 import bugbuster.deviceusage.access.SQLiteLocalStore;
 
@@ -28,18 +29,28 @@ public class SQLiteLocalStoreTest extends InstrumentationTestCase {
     private static final String COLNAME_DISK	= "diskusage";	// total bytes of app's data usage
         
     private SQLiteLocalStore db;
+    //private RenamingDelegatingContext context;
+    private Context context;
     
     public void setUp(){
     	//super.setUp();
-    	RenamingDelegatingContext context 
-        = new RenamingDelegatingContext(getInstrumentation().getTargetContext(), "test_");
+    	//context = new RenamingDelegatingContext(getInstrumentation().getTargetContext(), "test_");
+    	context = getInstrumentation().getTargetContext();
     	db = new SQLiteLocalStore(context);
     	//db.startService()
     	//db.putAppStatistics(AppStatistics newApp);
     	//dn.stopService();
     }
     
+    public void testPreCondition() {
+    	assertNotNull(db);
+    	db.startService();
+    	verifyTableExists(TABLE_NAME);
+    	db.stopService();
+    }
+    
     public void testPutApp(){
+    	clearDB();
     	db.startService();
     	{
     		AppStatistics app = new AppStatistics("com.testApp.hello", "1.0.1",
@@ -60,8 +71,64 @@ public class SQLiteLocalStoreTest extends InstrumentationTestCase {
     		db.putAppStatistics(app);
     	}
     	verifyRowCount(2);		
-    	
     	db.stopService();
+    }
+    
+    public void testReadApp() {
+    	clearDB();
+    	String randomName = "this.is.random.app";
+    	db.startService();
+    	{
+    		AppStatistics app = new AppStatistics(randomName, "1.0",
+    				0, 0, 0, 0, 0, 0, 0);
+    		delayOneSecond();
+    		db.putAppStatistics(app);
+    	}
+		verifyRowWithPackageName(randomName);
+		verifyRowCount(1);
+
+    	db.stopService();
+    }
+    
+    public void testDeleteApp() {
+    	clearDB();
+    	String anotherRandomName = "another.random.app";
+    	db.startService();
+    	{
+    		AppStatistics app = new AppStatistics(anotherRandomName, "1.1.1",
+    				0, 0, 0, 0, 0, 0, 0);
+    		delayOneSecond();
+    		db.putAppStatistics(app);
+    	}
+		verifyRowDelete(anotherRandomName);
+
+    	db.stopService();
+    }
+    
+    void verifyRowDelete(String packageName) {
+    	SQLiteDatabase db = null;
+        Cursor c = null;
+        try {
+            db = SQLiteDatabase.openDatabase(DATABASE_PATH + DATABASE_NAME, null,
+                    SQLiteDatabase.OPEN_READWRITE);
+            db.execSQL("delete from " + TABLE_NAME + " where " 
+                    + COLNAME_PKGNAME + " like '" + packageName + "'" );
+            
+            c = db.rawQuery("select " + COLNAME_PKGNAME + " from " + TABLE_NAME + " where " + 
+                    COLNAME_PKGNAME + " like '" + packageName + "' limit 1" ,
+                    null);
+            boolean isRowDeleted = false;
+            if (c.getCount() > 0) {
+            	isRowDeleted = false;
+            }
+            else {
+            	isRowDeleted = true;
+            }
+            assertTrue(isRowDeleted);
+        } finally {
+            closeResource(c);
+            closeResource(db);
+        }
     }
     
     void verifyRowCount(int referenceRowCount) {
@@ -106,6 +173,27 @@ public class SQLiteLocalStoreTest extends InstrumentationTestCase {
         }
     }
     
+    void verifyRowWithPackageName(String packageName) {
+    	SQLiteDatabase db = null;
+        Cursor c = null;
+        try {
+            db = SQLiteDatabase.openDatabase(DATABASE_PATH + DATABASE_NAME, null,
+                    SQLiteDatabase.OPEN_READONLY);
+            c = db.rawQuery("select " + COLNAME_PKGNAME + " from " + TABLE_NAME + " where " + 
+                    COLNAME_PKGNAME + " like '" + packageName + "' limit 1" ,
+                    null);
+            if (c.getCount() == 1) {
+                c.moveToFirst();
+                assertEquals(packageName, c.getString(0));
+            } else {
+                fail();
+            }
+        } finally {
+            closeResource(c);
+            closeResource(db);
+        }
+    }
+    
     void verifyDatabaseVersion(int expectedVersion) {
         SQLiteDatabase db = null;
         try {
@@ -132,7 +220,11 @@ public class SQLiteLocalStoreTest extends InstrumentationTestCase {
         SystemClock.sleep(sleepTime);
     }
     
-    /*void clearDB() {
-        getInstrumentation().getTargetContext().deleteDatabase(DATABASE_NAME);
-    }*/
+    void clearDB() {
+    	//context = new RenamingDelegatingContext(getInstrumentation().getTargetContext(), "test_");
+    	context = getInstrumentation().getTargetContext();
+    	if (!context.deleteDatabase(DATABASE_NAME)) {
+    		Log.e("TESTCASE", "error deleting database");
+    	}
+    }
 }
